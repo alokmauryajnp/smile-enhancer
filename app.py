@@ -12,13 +12,20 @@ def home():
 
 @app.route("/process-image", methods=["POST"])
 def process_image():
-    file = request.files['image']
-    img = Image.open(file.stream).convert('RGB')
-    img_np = np.array(img)
+    print("Processing image request...")
 
-    # Simple teeth whitening effect (brightness increase)
-    hsv = cv2.cvtColor(img_np, cv2.COLOR_RGB2HSV)
-    hsv[:, :, 2] = cv2.add(hsv[:, :, 2], 30)  # Increase brightness
+    if 'image' not in request.files:
+        print("⚠️ No image found in request.files")
+        return "No image uploaded", 400
+
+    file = request.files['image']
+    print("✅ Image received:", file.filename)
+
+    img = Image.open(file.stream).convert('RGB')
+
+    # Basic whitening filter
+    hsv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2HSV)
+    hsv[:, :, 2] = cv2.add(hsv[:, :, 2], 30)
     result = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
 
     result_img = Image.fromarray(result)
