@@ -6,19 +6,19 @@ from io import BytesIO
 
 app = Flask(__name__)
 
-# @app.route('/process-image', methods=['POST'])
 @app.route("/", methods=["GET"])
 def home():
     return "Smile enhancer is live!"
 
+@app.route("/process-image", methods=["POST"])
 def process_image():
     file = request.files['image']
     img = Image.open(file.stream).convert('RGB')
     img_np = np.array(img)
 
-    # Whitening logic: increase brightness of full image (demo)
+    # Simple teeth whitening effect (brightness increase)
     hsv = cv2.cvtColor(img_np, cv2.COLOR_RGB2HSV)
-    hsv[:, :, 2] = cv2.add(hsv[:, :, 2], 30)
+    hsv[:, :, 2] = cv2.add(hsv[:, :, 2], 30)  # Increase brightness
     result = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
 
     result_img = Image.fromarray(result)
