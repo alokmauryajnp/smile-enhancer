@@ -13,7 +13,8 @@ def whiten_teeth(image):
     # Convert to RGB for Mediapipe
     img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     with mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1,
-                                refine_landmarks=True, min_detection_confidence=0.5) as face_mesh:
+                                refine_landmarks=True, refine_connections=True,
+                                min_detection_confidence=0.5) as face_mesh:
         results = face_mesh.process(img_rgb)
         if not results.multi_face_landmarks:
             return image  # No face detected
@@ -28,11 +29,16 @@ def whiten_teeth(image):
         mask = np.zeros((h, w), dtype=np.uint8)
         cv2.fillPoly(mask, [np.array(mouth_points, dtype=np.int32)], 255)
 
-        # Apply whitening
+        # Create whitening overlay
         whitened = image.copy()
-        whitened[mask == 255] = cv2.addWeighted(whitened[mask == 255], 0.5, (255, 255, 255), 0.5, 0)
+        white_overlay = np.full_like(image, 255)
+
+        # Blend only mouth area
+        blended = cv2.addWeighted(whitened, 0.7, white_overlay, 0.3, 0)
+        whitened[mask == 255] = blended[mask == 255]
 
         return whitened
+
 
 @app.route('/')
 def home():
