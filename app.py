@@ -2,30 +2,44 @@ from flask import Flask, request, send_file
 from PIL import Image
 import cv2
 import numpy as np
+import mediapipe as mp
 import io
-import tempfile
 
 app = Flask(__name__)
 
-def whiten_teeth(image_pil):
+def detect_and_whiten_teeth(image_pil):
     # Convert PIL to OpenCV
     image = np.array(image_pil)
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
-    # Convert to HSV to isolate yellowish regions
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    
-    # Mask yellowish areas (likely teeth stains)
-    lower_yellow = np.array([10, 30, 80])
-    upper_yellow = np.array([40, 255, 255])
-    mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+    mp_face_mesh = mp.solutions.face_mesh
+    face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True)
 
-    # Apply whitening: Increase brightness in masked areas
-    whitening_strength = 30
-    image[mask > 0] = cv2.add(image[mask > 0], (whitening_strength, whitening_strength, whitening_strength))
+    # Convert to RGB for MediaPipe
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    results = face_mesh.process(image_rgb)
 
-    # Convert back to RGB and return as PIL image
-    result = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    if not results.multi_face_landmarks:
+        return image_pil  # Return original if no face detected
+
+    height, width, _ = image.shape
+    mask = np.zeros((height, width), dtype=np.uint8)
+
+    # Mouth landmark indices (upper and lower lips)
+    mouth_indices = list(range(78, 88)) + list(range(308, 318))
+
+    for face_landmarks in results.multi_face_landmarks:
+        points = [(int(landmark.x * width), int(landmark.y * height)) for i, landmark in enumerate(face_landmarks.landmark) if i in mouth_indices]
+        if points:
+            points = np.array(points)
+            cv2.fillPoly(mask, [points], 255)
+
+    # Apply whitening only to masked area
+    mouth_area = cv2.bitwise_and(image, image, mask=mask)
+    enhanced = image.copy()
+    enhanced[mask > 0] = cv2.add(enhanced[mask > 0], (40, 40, 40))
+
+    result = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
     return Image.fromarray(result)
 
 
@@ -37,15 +51,12 @@ def process_image():
     file = request.files['image']
     
     try:
-        # Open the uploaded image
         image = Image.open(file.stream).convert('RGB')
     except Exception as e:
         return f'Failed to read image: {e}', 400
 
-    # Process the image
-    processed_image = whiten_teeth(image)
+    processed_image = detect_and_whiten_teeth(image)
 
-    # Save image to memory for return
     buffer = io.BytesIO()
     processed_image.save(buffer, format='PNG')
     buffer.seek(0)
