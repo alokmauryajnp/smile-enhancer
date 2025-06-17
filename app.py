@@ -72,9 +72,7 @@ def whiten_teeth(image):
         
         return result
 # app route starts from here
-@app.route('/')
-def index():
-    return 'Smile Whitening API is running!'
+
 
 @app.route('/process-image', methods=['POST'])
 def process_image():
