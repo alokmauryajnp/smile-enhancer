@@ -47,7 +47,7 @@ def whiten_teeth(image):
         # Apply whitening in Lab color space
         lab = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
         l, a, b = cv2.split(lab)
-        l = np.where(teeth_mask == 255, np.clip(l + 40, 0, 255), l)
+        l = np.where(teeth_mask == 255, np.clip(l + 15, 0, 255), l)
         updated_lab = cv2.merge((l.astype(np.uint8), a, b))
         result = cv2.cvtColor(updated_lab, cv2.COLOR_Lab2BGR)
 
