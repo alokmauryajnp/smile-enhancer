@@ -25,31 +25,36 @@ def whiten_teeth(image):
 
         landmarks = results.multi_face_landmarks[0]
 
-        # Teeth landmarks: inner mouth (including top and bottom teeth area)
-        teeth_indices = [
-            78, 79, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14
-        ]
+        # Teeth-related points from inner lips and tooth area
+        teeth_indices = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312]
 
-        # Convert to image coordinates
+        # Get tooth polygon
         teeth_points = np.array([
             (int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h))
             for i in teeth_indices
         ])
 
-        # Create mask
+        # Create mouth mask
         mask = np.zeros((h, w), dtype=np.uint8)
         cv2.fillPoly(mask, [teeth_points], 255)
 
-        # Convert to Lab color space to target luminance
-        img_lab = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
-        l, a, b = cv2.split(img_lab)
+        # Convert to HSV for color filtering
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-        # Apply brightening only where mask is applied
-        l = np.where(mask == 255, cv2.add(l, 25), l)
+        # Create color mask for yellowish-white range (teeth)
+        lower = np.array([0, 0, 150])      # low saturation, high brightness
+        upper = np.array([60, 80, 255])    # limit yellows
+        color_mask = cv2.inRange(hsv, lower, upper)
+
+        # Combine both masks
+        teeth_mask = cv2.bitwise_and(mask, color_mask)
+
+        # Apply whitening: brighten only masked region
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
+        l, a, b = cv2.split(lab)
+        l = np.where(teeth_mask == 255, np.clip(l + 25, 0, 255), l)
         updated_lab = cv2.merge((l, a, b))
-
-        # Convert back to BGR
-        result = cv2.cvtColor(updated_lab, cv2.COLOR_Lab2BGR)
+        result = cv2.cvtColor(updated_lab.astype(np.uint8), cv2.COLOR_Lab2BGR)
 
         return result
 
