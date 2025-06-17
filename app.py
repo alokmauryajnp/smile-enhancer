@@ -23,13 +23,12 @@ def whiten_teeth(image):
         if not results.multi_face_landmarks:
             return image
 
-        # Facial landmarks
         landmarks = results.multi_face_landmarks[0]
 
-        # Approximate upper and lower teeth landmark indices
-        upper_teeth_indices = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291]
-        lower_teeth_indices = [146, 91, 181, 84, 17, 314, 405, 321, 375, 291]
-
+        # More comprehensive teeth landmark indices
+        upper_teeth_indices = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308]
+        lower_teeth_indices = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308]
+        
         # Convert to pixel coordinates
         upper_teeth_points = np.array([
             (int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h))
@@ -44,24 +43,39 @@ def whiten_teeth(image):
         mask = np.zeros((h, w), dtype=np.uint8)
         cv2.fillPoly(mask, [upper_teeth_points], 255)
         cv2.fillPoly(mask, [lower_teeth_points], 255)
-
-        # Smooth mask to blend naturally
-        mask = cv2.GaussianBlur(mask, (15, 15), 0)
-
-        # Convert to Lab color space
-        lab = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
-        l, a, b = cv2.split(lab)
-
-        # Brighten the L channel
-        l_whitened = l.copy()
-        l_whitened = np.where(mask > 0, np.clip(l + 25, 0, 255), l)
-
-        # Merge and convert back
-        updated_lab = cv2.merge((l_whitened.astype(np.uint8), a, b))
-        result = cv2.cvtColor(updated_lab, cv2.COLOR_Lab2BGR)
-
+        
+        # Dilate mask slightly to cover entire teeth area
+        kernel = np.ones((5,5), np.uint8)
+        mask = cv2.dilate(mask, kernel, iterations=1)
+        
+        # Smooth mask edges for better blending
+        mask = cv2.GaussianBlur(mask, (25, 25), 0)
+        mask = mask.astype(np.float32) / 255.0  # Convert to 0-1 range
+        
+        # Convert to HSV color space (better for color manipulation)
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        h, s, v = cv2.split(hsv)
+        
+        # Apply whitening effect only to masked areas
+        v_whitened = v.copy()
+        
+        # Increase value (brightness) and reduce saturation for whitening effect
+        v_whitened = np.where(mask > 0, 
+                             np.clip(v * (1.0 + 0.3 * mask), 0, 255), 
+                             v)
+        
+        s_whitened = np.where(mask > 0, 
+                             np.clip(s * (1.0 - 0.5 * mask), 0, 255), 
+                             s)
+        
+        # Merge channels back
+        whitened_hsv = cv2.merge((h, s_whitened.astype(np.uint8), v_whitened.astype(np.uint8)))
+        result = cv2.cvtColor(whitened_hsv, cv2.COLOR_HSV2BGR)
+        
+        # Blend with original image for natural look
+        result = cv2.addWeighted(image, 1 - mask, result, mask, 0)
+        
         return result
-
 # app route starts from here
 @app.route('/')
 def index():
