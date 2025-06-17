@@ -4,3 +4,6 @@ numpy
 pillow
 gunicorn
 mediapipe
+dlib
+numpy
+scikit-image
