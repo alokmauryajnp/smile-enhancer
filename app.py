@@ -1,94 +1,76 @@
 from flask import Flask, request, jsonify, send_file
+import os
 import cv2
 import numpy as np
-import mediapipe as mp
-import tempfile
-import os
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-mp_face_mesh = mp.solutions.face_mesh
+UPLOAD_FOLDER = 'uploads'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-def whiten_teeth(image):
-    img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    h, w, _ = image.shape
+# Helper function to overlay transparent image
+def overlay_transparent(background, overlay, x, y):
+    bg = background.copy()
+    h, w = overlay.shape[:2]
 
-    with mp_face_mesh.FaceMesh(
-        static_image_mode=True,
-        max_num_faces=1,
-        refine_landmarks=True,
-        min_detection_confidence=0.5
-    ) as face_mesh:
+    if overlay.shape[2] != 4:
+        raise ValueError("Overlay image must have 4 channels (RGBA).")
 
-        results = face_mesh.process(img_rgb)
-        if not results.multi_face_landmarks:
-            return image
+    if x + w > bg.shape[1] or y + h > bg.shape[0]:
+        raise ValueError("Overlay image exceeds background bounds.")
 
-        landmarks = results.multi_face_landmarks[0]
+    overlay_img = overlay[:, :, :3]
+    alpha_mask = overlay[:, :, 3:] / 255.0
+    bg_region = bg[y:y+h, x:x+w]
+    blended = (1.0 - alpha_mask) * bg_region + alpha_mask * overlay_img
+    bg[y:y+h, x:x+w] = blended.astype(np.uint8)
+    return bg
 
-        # More comprehensive teeth landmark indices
-        upper_teeth_indices = [78, 191, 80, 81, 82, 13, 312, 311, 310, 415, 308]
-        lower_teeth_indices = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308]
-        
-        # Convert to pixel coordinates
-        upper_teeth_points = np.array([
-            (int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h))
-            for i in upper_teeth_indices
-        ])
-        lower_teeth_points = np.array([
-            (int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h))
-            for i in lower_teeth_indices
-        ])
-
-        # Create teeth mask
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.fillPoly(mask, [upper_teeth_points], 255)
-        cv2.fillPoly(mask, [lower_teeth_points], 255)
-        
-        # Dilate mask slightly to cover entire teeth area
-        kernel = np.ones((5,5), np.uint8)
-        mask = cv2.dilate(mask, kernel, iterations=1)
-        
-        # Smooth mask edges for better blending
-        mask = cv2.GaussianBlur(mask, (25, 25), 0)
-        mask = mask.astype(np.float32) / 255.0  # Convert to 0-1 range
-        
-        # Convert to HSV color space (better for color manipulation)
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
-        
-        # Apply whitening effect only to masked areas
-        v_whitened = np.clip(v + (mask * 50), 0, 255)  # Increase brightness
-        s_whitened = np.clip(s * (1.0 - 0.7 * mask), 0, 255)  # Reduce saturation
-        
-        # Merge channels back
-        whitened_hsv = cv2.merge((h, s_whitened.astype(np.uint8), v_whitened.astype(np.uint8)))
-        whitened_bgr = cv2.cvtColor(whitened_hsv, cv2.COLOR_HSV2BGR)
-        
-        # Blend with original image using the mask
-        result = image.copy()
-        mask_3d = np.stack([mask]*3, axis=-1)  # Convert to 3-channel mask
-        result = (result * (1 - mask_3d) + whitened_bgr * mask_3d
-        result = result.astype(np.uint8)
-        
-        return result
-# app route starts from here
-
-
-@app.route('/process-image', methods=['POST'])
-def process_image():
+@app.route('/upload', methods=['POST'])
+def upload_image():
     if 'image' not in request.files:
-        return jsonify({'error': 'No image provided'}), 400
+        return jsonify({'error': 'No image uploaded'}), 400
 
-    file = request.files['image']
-    npimg = np.frombuffer(file.read(), np.uint8)
-    image = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+    image_file = request.files['image']
+    filename = secure_filename(image_file.filename)
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    image_file.save(filepath)
 
-    result = whiten_teeth(image)
+    # Load user image
+    face = cv2.imread(filepath)
+    if face is None:
+        return jsonify({'error': 'Invalid image'}), 400
 
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.png')
-    cv2.imwrite(temp_file.name, result)
+    # Load transparent white teeth overlay
+    teeth = cv2.imread('white_teeth.png', cv2.IMREAD_UNCHANGED)
+    if teeth is None or teeth.shape[2] != 4:
+        return jsonify({'error': 'Teeth image not found or invalid format'}), 500
 
-    return send_file(temp_file.name, mimetype='image/png')
+    # Resize and position (you can improve with face detection)
+    teeth_resized = cv2.resize(teeth, (220, 80))  # adjust as needed
+    x_pos, y_pos = 200, 330                      # adjust as needed
+
+    try:
+        result = overlay_transparent(face, teeth_resized, x_pos, y_pos)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+    result_path = os.path.join(UPLOAD_FOLDER, 'result_' + filename)
+    cv2.imwrite(result_path, result)
+
+    return send_file(result_path, mimetype='image/png')
+
+@app.route('/')
+def index():
+    return '''
+    <!doctype html>
+    <title>Teeth Whitening App</title>
+    <h1>Upload Image to Whiten Teeth</h1>
+    <form method=post enctype=multipart/form-data action="/upload">
+      <input type=file name=image>
+      <input type=submit value=Upload>
+    </form>
+    '''
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(debug=True)
