@@ -18,36 +18,46 @@ def whiten_teeth(image):
         refine_landmarks=True,
         min_detection_confidence=0.5
     ) as face_mesh:
+
         results = face_mesh.process(img_rgb)
         if not results.multi_face_landmarks:
             return image
 
+        # Facial landmarks
         landmarks = results.multi_face_landmarks[0]
 
-        # Teeth-related landmark indices (rough area)
-        teeth_indices = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312]
-        teeth_points = np.array([
+        # Approximate upper and lower teeth landmark indices
+        upper_teeth_indices = [61, 185, 40, 39, 37, 0, 267, 269, 270, 409, 291]
+        lower_teeth_indices = [146, 91, 181, 84, 17, 314, 405, 321, 375, 291]
+
+        # Convert to pixel coordinates
+        upper_teeth_points = np.array([
             (int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h))
-            for i in teeth_indices
+            for i in upper_teeth_indices
+        ])
+        lower_teeth_points = np.array([
+            (int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h))
+            for i in lower_teeth_indices
         ])
 
-        # Create a mask for teeth area
+        # Create teeth mask
         mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.fillPoly(mask, [teeth_points], 255)
+        cv2.fillPoly(mask, [upper_teeth_points], 255)
+        cv2.fillPoly(mask, [lower_teeth_points], 255)
 
-        # Convert to Lab color space for better lightness control
+        # Smooth mask to blend naturally
+        mask = cv2.GaussianBlur(mask, (15, 15), 0)
+
+        # Convert to Lab color space
         lab = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
         l, a, b = cv2.split(lab)
 
-        # Brighten only in masked region (L channel) without affecting color tone
+        # Brighten the L channel
         l_whitened = l.copy()
-        l_whitened[mask == 255] = np.clip(l[mask == 255] + 35, 0, 255)
+        l_whitened = np.where(mask > 0, np.clip(l + 25, 0, 255), l)
 
-        # Optional: reduce yellowness (B channel)
-        b_adjusted = b.copy()
-        b_adjusted[mask == 255] = np.clip(b[mask == 255] - 15, 0, 255)
-
-        updated_lab = cv2.merge((l_whitened.astype(np.uint8), a, b_adjusted))
+        # Merge and convert back
+        updated_lab = cv2.merge((l_whitened.astype(np.uint8), a, b))
         result = cv2.cvtColor(updated_lab, cv2.COLOR_Lab2BGR)
 
         return result
