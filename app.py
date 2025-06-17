@@ -1,76 +1,91 @@
-from flask import Flask, request, jsonify, send_file
-import os
-import cv2
+from flask import Flask, request, send_file
 import numpy as np
-from werkzeug.utils import secure_filename
+import cv2
+import dlib
+import io
+from scipy.spatial import distance
+from PIL import Image
+from skimage import io as skio
+import os
 
 app = Flask(__name__)
-UPLOAD_FOLDER = 'uploads'
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+predictor_path = "shape_predictor_68_face_landmarks.dat"  # make sure this file is in your root folder
 
-# Helper function to overlay transparent image
-def overlay_transparent(background, overlay, x, y):
-    bg = background.copy()
-    h, w = overlay.shape[:2]
+detector = dlib.get_frontal_face_detector()
+predictor = dlib.shape_predictor(predictor_path)
 
-    if overlay.shape[2] != 4:
-        raise ValueError("Overlay image must have 4 channels (RGBA).")
+MAR_THRESHOLD = 0.3
+ALPHA = 2.0  # Contrast
+BETA = 50    # Brightness
 
-    if x + w > bg.shape[1] or y + h > bg.shape[0]:
-        raise ValueError("Overlay image exceeds background bounds.")
+def mouth_aspect_ratio(pts):
+    D = distance.euclidean(pts[33], pts[51])
+    D1 = distance.euclidean(pts[61], pts[67])
+    D2 = distance.euclidean(pts[62], pts[66])
+    D3 = distance.euclidean(pts[63], pts[65])
+    mar = (D1 + D2 + D3) / (3 * D)
+    return mar
 
-    overlay_img = overlay[:, :, :3]
-    alpha_mask = overlay[:, :, 3:] / 255.0
-    bg_region = bg[y:y+h, x:x+w]
-    blended = (1.0 - alpha_mask) * bg_region + alpha_mask * overlay_img
-    bg[y:y+h, x:x+w] = blended.astype(np.uint8)
-    return bg
+def shape2np(shape):
+    coords = np.zeros((68, 2), dtype=int)
+    for i in range(68):
+        coords[i] = (shape.part(i).x, shape.part(i).y)
+    return coords
 
-@app.route('/upload', methods=['POST'])
-def upload_image():
-    if 'image' not in request.files:
-        return jsonify({'error': 'No image uploaded'}), 400
+def whiten_teeth(image):
+    faces = detector(image, 1)
+    if len(faces) == 0:
+        return None
 
-    image_file = request.files['image']
-    filename = secure_filename(image_file.filename)
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
-    image_file.save(filepath)
+    # Select largest face
+    max_face = max(faces, key=lambda d: (d.bottom()-d.top())*(d.right()-d.left()))
+    shape = predictor(image, max_face)
+    pts = shape2np(shape)
 
-    # Load user image
-    face = cv2.imread(filepath)
-    if face is None:
-        return jsonify({'error': 'Invalid image'}), 400
+    if mouth_aspect_ratio(pts) < MAR_THRESHOLD:
+        return None  # mouth not open
 
-    # Load transparent white teeth overlay
-    teeth = cv2.imread('white_teeth.png', cv2.IMREAD_UNCHANGED)
-    if teeth is None or teeth.shape[2] != 4:
-        return jsonify({'error': 'Teeth image not found or invalid format'}), 500
+    crop_img = image[max_face.top():max_face.bottom(), max_face.left():max_face.right()]
+    mask = np.zeros((crop_img.shape[0], crop_img.shape[1]), np.uint8)
 
-    # Resize and position (you can improve with face detection)
-    teeth_resized = cv2.resize(teeth, (220, 80))  # adjust as needed
-    x_pos, y_pos = 200, 330                      # adjust as needed
+    mouth_pts = pts[60:] - np.array([max_face.left(), max_face.top()])
+    cv2.fillConvexPoly(mask, mouth_pts, 255)
 
-    try:
-        result = overlay_transparent(face, teeth_resized, x_pos, y_pos)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    blur_mask = cv2.GaussianBlur(mask, (21, 21), 11)
+    overlay = cv2.cvtColor(crop_img, cv2.COLOR_BGR2BGRA)
+    overlay[:, :, 3] = blur_mask
 
-    result_path = os.path.join(UPLOAD_FOLDER, 'result_' + filename)
-    cv2.imwrite(result_path, result)
+    # Brighten and contrast
+    brightened = cv2.convertScaleAbs(overlay, alpha=ALPHA, beta=BETA)
 
-    return send_file(result_path, mimetype='image/png')
+    alpha = blur_mask.astype(float) / 255.0
+    result = crop_img.copy()
+    for c in range(3):
+        result[:, :, c] = (1.0 - alpha) * crop_img[:, :, c] + alpha * brightened[:, :, c]
+
+    output = image.copy()
+    output[max_face.top():max_face.bottom(), max_face.left():max_face.right()] = result
+    return output
 
 @app.route('/')
-def index():
-    return '''
-    <!doctype html>
-    <title>Teeth Whitening App</title>
-    <h1>Upload Image to Whiten Teeth</h1>
-    <form method=post enctype=multipart/form-data action="/upload">
-      <input type=file name=image>
-      <input type=submit value=Upload>
-    </form>
-    '''
+def home():
+    return 'Teeth Whitening API Running ✅'
+
+@app.route('/process-image', methods=['POST'])
+def process_image():
+    if 'image' not in request.files:
+        return 'No image uploaded.', 400
+
+    file = request.files['image']
+    npimg = np.frombuffer(file.read(), np.uint8)
+    image = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+
+    result = whiten_teeth(image)
+    if result is None:
+        return 'No face or open mouth detected.', 400
+
+    _, buffer = cv2.imencode('.png', result)
+    return send_file(io.BytesIO(buffer.tobytes()), mimetype='image/png')
 
 if __name__ == '__main__':
     app.run(debug=True)
