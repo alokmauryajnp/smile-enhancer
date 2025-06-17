@@ -57,23 +57,18 @@ def whiten_teeth(image):
         h, s, v = cv2.split(hsv)
         
         # Apply whitening effect only to masked areas
-        v_whitened = v.copy()
-        
-        # Increase value (brightness) and reduce saturation for whitening effect
-        v_whitened = np.where(mask > 0, 
-                             np.clip(v * (1.0 + 0.3 * mask), 0, 255), 
-                             v)
-        
-        s_whitened = np.where(mask > 0, 
-                             np.clip(s * (1.0 - 0.5 * mask), 0, 255), 
-                             s)
+        v_whitened = np.clip(v + (mask * 50), 0, 255)  # Increase brightness
+        s_whitened = np.clip(s * (1.0 - 0.7 * mask), 0, 255)  # Reduce saturation
         
         # Merge channels back
         whitened_hsv = cv2.merge((h, s_whitened.astype(np.uint8), v_whitened.astype(np.uint8)))
-        result = cv2.cvtColor(whitened_hsv, cv2.COLOR_HSV2BGR)
+        whitened_bgr = cv2.cvtColor(whitened_hsv, cv2.COLOR_HSV2BGR)
         
-        # Blend with original image for natural look
-        result = cv2.addWeighted(image, 1 - mask, result, mask, 0)
+        # Blend with original image using the mask
+        result = image.copy()
+        mask_3d = np.stack([mask]*3, axis=-1)  # Convert to 3-channel mask
+        result = (result * (1 - mask_3d) + whitened_bgr * mask_3d
+        result = result.astype(np.uint8)
         
         return result
 # app route starts from here
