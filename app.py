@@ -10,28 +10,49 @@ mp_face_mesh = mp.solutions.face_mesh
 
 def whiten_teeth(image):
     img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    with mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1,
-                                refine_landmarks=True,
-                                min_detection_confidence=0.5) as face_mesh:
+    h, w, _ = image.shape
+
+    with mp_face_mesh.FaceMesh(
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5
+    ) as face_mesh:
         results = face_mesh.process(img_rgb)
+
         if not results.multi_face_landmarks:
-            return image  # No face detected
+            return image
 
         landmarks = results.multi_face_landmarks[0]
-        h, w, _ = image.shape
-        mouth_indices = list(range(78, 88)) + list(range(308, 318))
-        mouth_points = [(int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h)) for i in mouth_indices]
 
+        # Teeth landmarks: inner mouth (including top and bottom teeth area)
+        teeth_indices = [
+            78, 79, 80, 81, 82, 13, 312, 311, 310, 415, 308, 324, 318, 402, 317, 14
+        ]
+
+        # Convert to image coordinates
+        teeth_points = np.array([
+            (int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h))
+            for i in teeth_indices
+        ])
+
+        # Create mask
         mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.fillPoly(mask, [np.array(mouth_points, dtype=np.int32)], 255)
+        cv2.fillPoly(mask, [teeth_points], 255)
 
-        white_overlay = np.full_like(image, 255)
-        blended = cv2.addWeighted(image, 0.7, white_overlay, 0.3, 0)
+        # Convert to Lab color space to target luminance
+        img_lab = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
+        l, a, b = cv2.split(img_lab)
 
-        result = image.copy()
-        result[mask == 255] = blended[mask == 255]
+        # Apply brightening only where mask is applied
+        l = np.where(mask == 255, cv2.add(l, 25), l)
+        updated_lab = cv2.merge((l, a, b))
+
+        # Convert back to BGR
+        result = cv2.cvtColor(updated_lab, cv2.COLOR_Lab2BGR)
 
         return result
+
 
 @app.route('/process-image', methods=['POST'])
 def process_image():
