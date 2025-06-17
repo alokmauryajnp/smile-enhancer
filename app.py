@@ -24,34 +24,34 @@ def whiten_teeth(image):
 
         landmarks = results.multi_face_landmarks[0]
 
-        # Teeth-related indices (inner mouth)
+        # Teeth-related landmark indices (rough area)
         teeth_indices = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312]
         teeth_points = np.array([
             (int(landmarks.landmark[i].x * w), int(landmarks.landmark[i].y * h))
             for i in teeth_indices
         ])
 
-        # Mask for polygon around teeth
+        # Create a mask for teeth area
         mask = np.zeros((h, w), dtype=np.uint8)
         cv2.fillPoly(mask, [teeth_points], 255)
 
-        # Color filtering in HSV space for tooth tones
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        lower = np.array([0, 0, 150])
-        upper = np.array([60, 80, 255])
-        color_mask = cv2.inRange(hsv, lower, upper)
-
-        # Combine both masks
-        teeth_mask = cv2.bitwise_and(mask, color_mask)
-
-        # Apply whitening in Lab color space
+        # Convert to Lab color space for better lightness control
         lab = cv2.cvtColor(image, cv2.COLOR_BGR2Lab)
         l, a, b = cv2.split(lab)
-        l = np.where(teeth_mask == 255, np.clip(l + 15, 0, 255), l)
-        updated_lab = cv2.merge((l.astype(np.uint8), a, b))
+
+        # Brighten only in masked region (L channel) without affecting color tone
+        l_whitened = l.copy()
+        l_whitened[mask == 255] = np.clip(l[mask == 255] + 35, 0, 255)
+
+        # Optional: reduce yellowness (B channel)
+        b_adjusted = b.copy()
+        b_adjusted[mask == 255] = np.clip(b[mask == 255] - 15, 0, 255)
+
+        updated_lab = cv2.merge((l_whitened.astype(np.uint8), a, b_adjusted))
         result = cv2.cvtColor(updated_lab, cv2.COLOR_Lab2BGR)
 
         return result
+
 # app route starts from here
 @app.route('/')
 def index():
